@@ -38,14 +38,17 @@ class DiscoveryEngine:
         Returns:
             Dictionary of all discovered devices
         """
-        methods = methods or ["mdns", "ssdp"]  # Default methods (ARP used for enrichment)
+        methods = methods or [
+            "mdns",
+            "ssdp",
+        ]  # Default methods (ARP used for enrichment)
 
         print("=" * 60)
         print("Starting Device Discovery Engine")
         print("=" * 60)
 
         # Calculate method count for progress display
-        method_count = len([m for m in methods if m in ["mdns", "ssdp"]])
+        method_count = len([m for m in methods if m in ["mdns", "ssdp", "arp"]])
         current_method = 0
 
         # Run mDNS discovery
@@ -61,9 +64,17 @@ class DiscoveryEngine:
             ssdp_devices = self._discover_ssdp(duration)
             self._merge_devices(ssdp_devices)
 
+        if "arp" in methods:
+            current_method += 1
+            print(f"\n[{current_method}/{method_count}] Running ARP Discovery...")
+            arp_devices = self._discover_arp(duration)
+            self._merge_devices(arp_devices)
+
         # ARP enrichment - Add MAC addresses to already discovered devices
         if self.discovered_devices:
-            print(f"\n[Enrichment] Using ARP to get MAC addresses for discovered devices...")
+            print(
+                f"\n[Enrichment] Using ARP to get MAC addresses for discovered devices..."
+            )
             self._enrich_with_arp()
 
         # if 'nmap' in methods:
@@ -113,7 +124,9 @@ class DiscoveryEngine:
             devices = discover_arp_devices(duration=duration)
             return devices
         except PermissionError:
-            print("Warning: ARP scanning requires administrator/root privileges. Skipping ARP discovery.")
+            print(
+                "Warning: ARP scanning requires administrator/root privileges. Skipping ARP discovery."
+            )
             return {}
         except Exception as e:
             print(f"Error during ARP discovery: {e}")
@@ -134,8 +147,8 @@ class DiscoveryEngine:
             # Get all IP addresses from discovered devices that need MAC addresses
             target_ips = []
             for device_id, device_info in self.discovered_devices.items():
-                ip = device_info.get('ip_address')
-                mac = device_info.get('mac_address')
+                ip = device_info.get("ip_address")
+                mac = device_info.get("mac_address")
                 # Only query if we have an IP and don't already have a MAC
                 if ip and not mac and ip not in target_ips:
                     target_ips.append(ip)
@@ -149,9 +162,9 @@ class DiscoveryEngine:
 
             # Update devices with MAC addresses
             for device_id, device_info in self.discovered_devices.items():
-                ip = device_info.get('ip_address')
+                ip = device_info.get("ip_address")
                 if ip in mac_mapping:
-                    device_info['mac_address'] = mac_mapping[ip]
+                    device_info["mac_address"] = mac_mapping[ip]
 
         except Exception as e:
             print(f"  Warning: ARP enrichment failed: {e}")
