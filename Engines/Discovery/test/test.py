@@ -99,7 +99,7 @@ def test_mdns_module_directly():
     """Test mdns_module directly"""
     print("\nTesting mdns_module directly (3 seconds)...")
     try:
-        from Engines.Discovery.modules.mdns_module import discover_mdns_devices
+        from Engines.Discovery.modules.protocols.mdns_module import discover_mdns_devices
 
         devices = discover_mdns_devices(duration=3)
         print(f"✓ discover_mdns_devices() completed")

@@ -7,9 +7,9 @@ from typing import Dict, List, Optional
 
 # Handle both standalone and module imports
 if __name__ == "__main__":
-    from modules.mdns_module import discover_mdns_devices
+    from modules.protocols.mdns_module import discover_mdns_devices
 else:
-    from .modules.mdns_module import discover_mdns_devices
+    from .modules.protocols.mdns_module import discover_mdns_devices
 
 
 class DiscoveryEngine:
@@ -102,9 +102,9 @@ class DiscoveryEngine:
         try:
             # Handle both standalone and module imports
             if __name__ == "__main__":
-                from modules.ssdp_module import discover_ssdp_devices
+                from modules.protocols.ssdp_module import discover_ssdp_devices
             else:
-                from .modules.ssdp_module import discover_ssdp_devices
+                from .modules.protocols.ssdp_module import discover_ssdp_devices
 
             devices = discover_ssdp_devices(duration=duration)
             return devices
@@ -117,9 +117,9 @@ class DiscoveryEngine:
         try:
             # Handle both standalone and module imports
             if __name__ == "__main__":
-                from modules.arp_module import discover_arp_devices
+                from modules.protocols.arp_module import discover_arp_devices
             else:
-                from .modules.arp_module import discover_arp_devices
+                from .modules.protocols.arp_module import discover_arp_devices
 
             devices = discover_arp_devices(duration=duration)
             return devices
@@ -140,9 +140,9 @@ class DiscoveryEngine:
         try:
             # Handle both standalone and module imports
             if __name__ == "__main__":
-                from modules.arp_module import enrich_devices_with_mac
+                from modules.protocols.arp_module import enrich_devices_with_mac
             else:
-                from .modules.arp_module import enrich_devices_with_mac
+                from .modules.protocols.arp_module import enrich_devices_with_mac
 
             # Get all IP addresses from discovered devices that need MAC addresses
             target_ips = []
