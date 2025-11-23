@@ -1,17 +1,10 @@
 """
-ARP Discovery Module - NOT FOR STANDALONE USE
-This module is designed to be imported and used by the Discovery Engine only.
+ARP Discovery Module
 """
 
 # Prevent standalone execution
 if __name__ == "__main__":
-    raise RuntimeError(
-        "This module cannot be run standalone. "
-        "Import and use it through the Discovery Engine:\n"
-        "  from Engines.Discovery import DiscoveryEngine\n"
-        "  engine = DiscoveryEngine()\n"
-        "  devices = engine.discover_all()"
-    )
+    raise RuntimeError("This module cannot be run standalone. ")
 
 from scapy.all import ARP, Ether, srp
 import ipaddress
@@ -24,27 +17,10 @@ class ARPDiscovery:
     """Main class for ARP device discovery"""
 
     def __init__(self, target_subnet: Optional[str] = None):
-        """
-        Initialize ARP discovery
-
-        Args:
-            target_subnet: Target subnet to scan (e.g., '192.168.1.0/24')
-                          If None, will attempt to detect local subnet
-        """
         self.target_subnet = target_subnet or self._detect_local_subnet()
         self.devices = {}
 
     def start_discovery(self, duration: int = 10, timeout: int = 2) -> Dict:
-        """
-        Start ARP discovery for specified duration
-
-        Args:
-            duration: How long to scan for devices (seconds) - used for retries
-            timeout: Timeout for ARP responses (seconds)
-
-        Returns:
-            Dictionary of discovered devices
-        """
         try:
             self.devices = {}
 
@@ -53,21 +29,16 @@ class ARPDiscovery:
                 return {}
 
             print(f"Scanning subnet {self.target_subnet} via ARP...")
-
-            # Create ARP request packet
             arp = ARP(pdst=self.target_subnet)
             ether = Ether(dst="ff:ff:ff:ff:ff:ff")
             packet = ether / arp
 
-            # Send packets and receive responses
             result = srp(packet, timeout=timeout, verbose=0)[0]
-
-            # Parse responses
             for sent, received in result:
                 device_data = self._parse_device_info(received)
-                device_id = device_data.get('mac_address', device_data.get('ip_address', 'unknown'))
-
-                # Avoid duplicates
+                device_id = device_data.get(
+                    "mac_address", device_data.get("ip_address", "unknown")
+                )
                 if device_id not in self.devices:
                     self.devices[device_id] = device_data
 
@@ -76,8 +47,6 @@ class ARPDiscovery:
                     print(f"MAC Address: {device_data.get('mac_address', 'Unknown')}")
                     print(f"Vendor: {device_data.get('vendor', 'Unknown')}")
                     print("-" * 50)
-
-            # Return discovered devices
             print(f"\nFound {len(self.devices)} device(s) via ARP")
             return self.devices
 
@@ -91,33 +60,27 @@ class ARPDiscovery:
     def _parse_device_info(self, response) -> Dict:
         """Parse ARP response into structured device data"""
         device_data = {
-            'name': None,
-            'type': 'arp',
-            'ip_address': None,
-            'mac_address': None,
-            'port': None,
-            'server': None,
-            'vendor': None,
-            'properties': {},
-            'discovery_method': 'arp'
+            "name": None,
+            "type": "arp",
+            "ip_address": None,
+            "mac_address": None,
+            "port": None,
+            "server": None,
+            "vendor": None,
+            "properties": {},
+            "discovery_method": "arp",
         }
+        if hasattr(response, "psrc"):
+            device_data["ip_address"] = response.psrc
+            device_data["name"] = self._resolve_hostname(response.psrc)
 
-        # Extract IP address
-        if hasattr(response, 'psrc'):
-            device_data['ip_address'] = response.psrc
-            # Try to resolve hostname
-            device_data['name'] = self._resolve_hostname(response.psrc)
-
-        # Extract MAC address
-        if hasattr(response, 'hwsrc'):
-            device_data['mac_address'] = response.hwsrc
-            # Try to identify vendor from MAC
-            device_data['vendor'] = self._get_vendor_from_mac(response.hwsrc)
+        if hasattr(response, "hwsrc"):
+            device_data["mac_address"] = response.hwsrc
+            device_data["vendor"] = self._get_vendor_from_mac(response.hwsrc)
 
         return device_data
 
     def _resolve_hostname(self, ip_address: str) -> Optional[str]:
-        """Try to resolve hostname from IP address"""
         try:
             hostname = socket.gethostbyaddr(ip_address)[0]
             return hostname
@@ -125,33 +88,15 @@ class ARPDiscovery:
             return None
 
     def _get_vendor_from_mac(self, mac_address: str) -> Optional[str]:
-        """
-        Get vendor name from MAC address OUI
-        Note: This is a placeholder. Actual implementation would need
-        a MAC vendor database lookup.
-        """
         _ = mac_address  # Unused for now
-        # TODO: Implement MAC vendor lookup
-        # Could use:
-        # - Local OUI database file
-        # - manuf library: pip install manuf
-        # - mac-vendor-lookup library: pip install mac-vendor-lookup
         return None
 
     def _detect_local_subnet(self) -> Optional[str]:
-        """
-        Attempt to detect the local subnet automatically
-        Returns subnet in CIDR notation (e.g., '192.168.1.0/24')
-        """
         try:
-            # Get local IP address
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
-
-            # Assume /24 subnet for simplicity
-            # In production, you'd want to detect the actual netmask
             ip_obj = ipaddress.IPv4Address(local_ip)
             network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
 
@@ -166,52 +111,16 @@ class ARPDiscovery:
         return self.devices.copy()
 
 
-def discover_arp_devices(duration: int = 10, target_subnet: Optional[str] = None, timeout: int = 2) -> Dict:
-    """
-    Convenience function to discover devices via ARP
-
-    Args:
-        duration: How long to scan (seconds)
-        target_subnet: Target subnet in CIDR notation (e.g., '192.168.1.0/24')
-                      If None, attempts to auto-detect local subnet
-        timeout: Timeout for ARP responses (seconds)
-
-    Returns:
-        Dictionary of discovered devices with structure:
-        {
-            'device_identifier': {
-                'name': str or None (hostname if resolved),
-                'type': 'arp',
-                'ip_address': str,
-                'mac_address': str,
-                'port': None,
-                'server': None,
-                'vendor': str or None,
-                'properties': dict,
-                'discovery_method': 'arp'
-            }
-        }
-    """
+def discover_arp_devices(
+    duration: int = 10, target_subnet: Optional[str] = None, timeout: int = 2
+) -> Dict:
     discovery = ARPDiscovery(target_subnet)
     return discovery.start_discovery(duration, timeout)
 
 
-def enrich_devices_with_mac(ip_addresses: List[str], timeout: int = 1) -> Dict[str, str]:
-    """
-    Enrich a list of IP addresses with their MAC addresses using ARP
-
-    Args:
-        ip_addresses: List of IP addresses to query
-        timeout: Timeout for ARP responses (seconds)
-
-    Returns:
-        Dictionary mapping IP addresses to MAC addresses
-        {
-            '192.168.1.100': 'aa:bb:cc:dd:ee:ff',
-            '192.168.1.101': '11:22:33:44:55:66',
-            ...
-        }
-    """
+def enrich_devices_with_mac(
+    ip_addresses: List[str], timeout: int = 1
+) -> Dict[str, str]:
     mac_mapping = {}
 
     if not ip_addresses:
@@ -224,15 +133,11 @@ def enrich_devices_with_mac(ip_addresses: List[str], timeout: int = 1) -> Dict[s
 
         for ip in ip_addresses:
             try:
-                # Create ARP request for this specific IP
                 arp_request = ARP(pdst=ip)
                 ether = Ether(dst="ff:ff:ff:ff:ff:ff")
                 packet = ether / arp_request
-
-                # Send and receive
                 result = srp(packet, timeout=timeout, verbose=0)[0]
 
-                # Extract MAC address from response
                 if result:
                     for sent, received in result:
                         mac_address = received.hwsrc
@@ -241,13 +146,14 @@ def enrich_devices_with_mac(ip_addresses: List[str], timeout: int = 1) -> Dict[s
                         break
 
             except Exception as e:
-                # Silently skip failed IPs
                 pass
 
         print(f"  Enriched {len(mac_mapping)} device(s) with MAC addresses")
 
     except PermissionError:
-        print("  Warning: ARP requires administrator/root privileges. Skipping enrichment.")
+        print(
+            "  Warning: ARP requires administrator/root privileges. Skipping enrichment."
+        )
     except ImportError:
         print("  Warning: Scapy not installed. Install with: pip install scapy")
     except Exception as e:

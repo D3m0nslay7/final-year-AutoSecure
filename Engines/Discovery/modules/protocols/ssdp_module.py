@@ -18,6 +18,16 @@ import time
 from typing import Dict, List, Optional
 import re
 
+# Import ARP enrichment function
+try:
+    from .arp_module import enrich_devices_with_mac
+except ImportError:
+    # Fallback for different import contexts
+    try:
+        from arp_module import enrich_devices_with_mac
+    except ImportError:
+        enrich_devices_with_mac = None
+
 
 class SSDPDiscovery:
     """Main class for SSDP/UPnP device discovery"""
@@ -163,16 +173,29 @@ class SSDPDiscovery:
 
     def _get_mac_address(self, ip_address: str) -> Optional[str]:
         """
-        Attempt to get MAC address for an IP.
-        Note: This is a placeholder. Actual implementation would need
-        OS-specific ARP table lookups or network scanning.
+        Attempt to get MAC address for an IP using ARP.
+
+        Uses the enrich_devices_with_mac function from arp_module
+        to query the MAC address via ARP protocol.
+
+        Args:
+            ip_address: IP address to lookup
+
+        Returns:
+            MAC address if found, None otherwise
         """
-        _ = ip_address  # Unused for now
-        # TODO: Implement MAC address lookup via ARP table
-        # This could use:
-        # - Windows: 'arp -a' command
-        # - Linux/Mac: 'arp -n' or '/proc/net/arp'
-        # - Or use scapy library for cross-platform support
+        if not ip_address:
+            return None
+
+        # Use ARP enrichment function if available
+        if enrich_devices_with_mac is not None:
+            try:
+                mac_mapping = enrich_devices_with_mac([ip_address], timeout=1)
+                return mac_mapping.get(ip_address)
+            except Exception:
+                # If ARP fails (permissions, network issues), return None
+                return None
+
         return None
 
     def get_discovered_devices(self) -> Dict:
