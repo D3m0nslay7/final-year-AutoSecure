@@ -30,8 +30,8 @@ class DiscoveryEngine:
 
         Args:
             duration: How long to scan for devices (seconds)
-            methods: Optional list of methods to use. Default: ['mdns', 'ssdp']
-                    Available: 'mdns', 'ssdp'
+            methods: Optional list of methods to use. Default: ['mdns', 'ssdp', 'mqtt']
+                    Available: 'mdns', 'ssdp', 'mqtt'
                     Note: ARP is automatically used to enrich discovered devices with MAC addresses
                     Future: 'nmap' (TODO)
 
@@ -41,6 +41,7 @@ class DiscoveryEngine:
         methods = methods or [
             "mdns",
             "ssdp",
+            "mqtt",
         ]  # Default methods (ARP used for enrichment)
 
         print("=" * 60)
@@ -48,7 +49,7 @@ class DiscoveryEngine:
         print("=" * 60)
 
         # Calculate method count for progress display
-        method_count = len([m for m in methods if m in ["mdns", "ssdp", "arp"]])
+        method_count = len([m for m in methods if m in ["mdns", "ssdp", "arp", "mqtt"]])
         current_method = 0
 
         # Run mDNS discovery
@@ -70,6 +71,12 @@ class DiscoveryEngine:
             arp_devices = self._discover_arp(duration)
             self._merge_devices(arp_devices)
 
+        if "mqtt" in methods:
+            current_method += 1
+            print(f"\n[{current_method}/{method_count}] Running MQTT Discovery...")
+            mqtt_devices = self._discover_mqtt(duration)
+            self._merge_devices(mqtt_devices)
+
         # ARP enrichment - Add MAC addresses to already discovered devices
         if self.discovered_devices:
             print(
@@ -87,6 +94,113 @@ class DiscoveryEngine:
         print("=" * 60)
 
         return self.get_all_devices()
+
+    def _discover_mqtt(self, duration: int = 10) -> Dict:
+        """
+        Run MQTT broker discovery
+
+        Uses NetworkScanner to find devices on the network, then uses
+        MQTTBrokerDetector to identify and verify MQTT brokers.
+
+        Args:
+            duration: Scan duration in seconds (used for network scan timeout)
+
+        Returns:
+            Dictionary of discovered MQTT brokers
+        """
+        try:
+            # Handle both standalone and module imports
+            if __name__ == "__main__":
+                from modules.core.network_scanner import NetworkScanner
+                from modules.core.port_scanner import PortScanner
+                from modules.protocols.mqtt_detector import MQTTBrokerDetector
+            else:
+                from .modules.core.network_scanner import NetworkScanner
+                from .modules.core.port_scanner import PortScanner
+                from .modules.protocols.mqtt_detector import MQTTBrokerDetector
+
+            # Detect local subnet automatically
+            import socket
+            import ipaddress
+
+            try:
+                # Get local IP address
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+
+                # Assume /24 subnet
+                network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
+                target_subnet = str(network)
+
+                print(f"  Scanning subnet: {target_subnet}")
+            except Exception as e:
+                print(f"  Error detecting subnet: {e}")
+                print("  Skipping MQTT discovery")
+                return {}
+
+            # Step 1: Scan network for active devices
+            print(f"  [1/3] Scanning network for active devices...")
+            net_scanner = NetworkScanner(target_subnet, timeout=min(duration, 5))
+            devices = net_scanner.scan()
+
+            if not devices:
+                print("  No devices found on network")
+                return {}
+
+            print(f"  Found {len(devices)} device(s) on network")
+
+            # Step 2: Check for MQTT ports and verify protocol
+            print(f"  [2/3] Checking devices for MQTT brokers...")
+            port_scanner = PortScanner(timeout=2, max_workers=20)
+            mqtt_detector = MQTTBrokerDetector(port_scanner, timeout=2)
+
+            brokers = mqtt_detector.find_brokers(devices)
+
+            if not brokers:
+                print("  No MQTT brokers found")
+                return {}
+
+            # Step 3: Convert broker list to device dictionary format
+            print(f"  [3/3] Processing {len(brokers)} MQTT broker(s)...")
+            mqtt_devices = {}
+
+            for broker in brokers:
+                # Create a unique ID for this broker
+                device_id = f"mqtt_{broker['ip']}_{broker['port']}"
+
+                # Convert to standard device format
+                mqtt_devices[device_id] = {
+                    'name': f"{broker['vendor']} MQTT Broker",
+                    'type': 'mqtt_broker',
+                    'ip_address': broker['ip'],
+                    'mac_address': broker.get('mac'),
+                    'port': broker['port'],
+                    'server': broker['vendor'],
+                    'vendor': broker['vendor'],
+                    'properties': {
+                        'mqtt_version': broker.get('mqtt_version'),
+                        'features': broker.get('features', []),
+                        'additional_ports': broker.get('additional_ports', [])
+                    },
+                    'discovery_method': 'mqtt'
+                }
+
+                print(f"  ✓ Found: {broker['vendor']} at {broker['ip']}:{broker['port']} (MQTT {broker.get('mqtt_version', 'Unknown')})")
+
+            return mqtt_devices
+
+        except PermissionError:
+            print("  Error: MQTT discovery requires administrator/root privileges for network scanning")
+            return {}
+        except ImportError as e:
+            print(f"  Error: Missing required library for MQTT discovery: {e}")
+            print("  Install required packages: pip install scapy paho-mqtt requests")
+            return {}
+        except Exception as e:
+            print(f"  Error during MQTT discovery: {e}")
+            return {}
 
     def _discover_mdns(self, duration: int = 10) -> Dict:
         """Run mDNS/Zeroconf discovery"""
@@ -172,13 +286,19 @@ class DiscoveryEngine:
     def _merge_devices(self, new_devices: Dict) -> None:
         """
         Merge newly discovered devices into the main registry
-        Handle duplicates by IP address
+        Handle duplicates by IP address (and port for MQTT brokers)
         """
         for device_id, device_info in new_devices.items():
             ip_address = device_info.get("ip_address")
+            port = device_info.get("port")
+            device_type = device_info.get("type")
 
-            # Check if we already have this device by IP
-            existing_device = self._find_device_by_ip(ip_address)
+            # For MQTT brokers, check both IP and port (same IP can have multiple brokers)
+            if device_type == "mqtt_broker":
+                existing_device = self._find_mqtt_broker(ip_address, port)
+            else:
+                # For other devices, check only IP
+                existing_device = self._find_device_by_ip(ip_address)
 
             if existing_device:
                 # Update existing device with new information
@@ -198,6 +318,30 @@ class DiscoveryEngine:
 
         for device_id, device_info in self.discovered_devices.items():
             if device_info.get("ip_address") == ip_address:
+                return {"id": device_id, **device_info}
+        return None
+
+    def _find_mqtt_broker(self, ip_address: str, port: int) -> Optional[Dict]:
+        """
+        Find an MQTT broker by IP address AND port.
+
+        Since multiple MQTT brokers can run on the same IP with different ports,
+        we need to check both IP and port to identify a specific broker.
+
+        Args:
+            ip_address: IP address of the broker
+            port: Port number of the broker
+
+        Returns:
+            Device dict if found, None otherwise
+        """
+        if not ip_address or not port:
+            return None
+
+        for device_id, device_info in self.discovered_devices.items():
+            if (device_info.get("ip_address") == ip_address and
+                device_info.get("port") == port and
+                device_info.get("type") == "mqtt_broker"):
                 return {"id": device_id, **device_info}
         return None
 
