@@ -1,0 +1,5 @@
+zeroconf
+ssdpy
+scapy
+requests
+paho-mqtt
