@@ -19,5 +19,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run with unbuffered output (-u) so logs appear in real-time
-# Use the Docker wrapper script for better configuration
-CMD ["python", "-u", "run_discovery_docker.py"]
+# Run discovery_engine.py directly (it has __main__ block)
+CMD ["python", "-u", "discovery_engine.py"]
