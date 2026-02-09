@@ -1,5 +1,5 @@
 @echo off
-REM Complete AutoSecure Test - Devices + Discovery Engine
+REM Complete AutoSecure Test - Devices + Main Engine Pipeline
 
 echo ============================================================
 echo         AutoSecure - Complete Testing Environment
@@ -8,7 +8,7 @@ echo.
 echo This script will:
 echo   1. Start all test devices in Docker containers
 echo   2. Wait for devices to initialize
-echo   3. Run the Discovery Engine to find all devices
+echo   3. Run the Main Engine pipeline
 echo   4. Display results
 echo.
 echo ============================================================
@@ -47,12 +47,12 @@ timeout /t 5 /nobreak >nul
 echo Devices are ready!
 echo.
 echo ============================================================
-echo [Step 3/3] Running Discovery Engine...
+echo [Step 3/3] Running AutoSecure Engines (Discovery + Segmentation)...
 echo ============================================================
 echo.
 
-cd ..\Engines\Discovery
-call run-discovery-engine.bat
+cd ..\Engines
+call run-engines.bat
 
 echo.
 echo ============================================================
@@ -62,7 +62,7 @@ echo.
 echo All devices are still running.
 echo.
 echo Options:
-echo   - Run discovery again:  cd Engines\Discovery ^&^& run-discovery-engine.bat
+echo   - Run again:            cd Engines ^&^& run-engines.bat
 echo   - View device logs:     docker logs autosecure-mdns-generic-1
 echo   - List all devices:     cd Devices ^&^& list-devices.bat
 echo   - Stop all devices:     cd Devices ^&^& stop-all-devices.bat
@@ -70,5 +70,5 @@ echo.
 echo ============================================================
 echo.
 
-cd ..\..
+cd ..
 pause

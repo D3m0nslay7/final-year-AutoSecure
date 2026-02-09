@@ -7,7 +7,7 @@ A modular IoT device discovery system that supports multiple discovery methods.
 ```
 discovery_engine.py  → Main orchestrator (coordinates all discovery methods)
     ↓ calls
-mdns_module.py      → mDNS/Zeroconf discovery implementation
+(any)_module.py      → mDNS/Zeroconf discovery implementation
     ↓ returns
 Device Dictionary   → Structured device data with IPs, MACs, metadata
 ```
