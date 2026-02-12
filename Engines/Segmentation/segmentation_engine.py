@@ -10,13 +10,16 @@ class SegmentationEngine:
     
     def classify_device(self, device_info):
         """Determine which segment based on discovery results"""
-        protocols = device_info['protocols']
-        
-        if 'ssdp' in protocols or 'mdns' in protocols:
+        methods = device_info.get('discovery_method', '')
+        # discovery_method can be a string or a list
+        if isinstance(methods, str):
+            methods = [methods]
+
+        if 'ssdp' in methods or 'mdns' in methods:
             return 'iot'
-        elif 'mqtt' in protocols:
+        elif 'mqtt' in methods:
             return 'iot'
-        elif 'coap' in protocols:
+        elif 'coap' in methods:
             return 'iot'
         else:
             return 'quarantine'  # Unknown devices isolated

@@ -10,7 +10,7 @@ def run_autosecure():
     devices = scanner.discover_all()
     
     print("\n🔒 Phase 2: Segmentation")
-    for device in devices:
+    for device in devices.values():
         segmentation.apply_segmentation(device)
     
     print("\n✅ AutoSecure active - monitoring traffic")
