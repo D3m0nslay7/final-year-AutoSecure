@@ -21,14 +21,19 @@ class IptablesManager:
         """Apply segment-specific rules"""
 
         if rules['block_internal']:
-            # Block access to internal network (except gateway)
+            # Allow gateway first, then block rest of internal network (two rules required)
+            subprocess.run([
+                'iptables', '-A', 'AUTOSECURE_IOT',
+                '-s', ip,
+                '-d', '192.168.1.1',
+                '-j', 'ACCEPT'
+            ], check=False)
             subprocess.run([
                 'iptables', '-A', 'AUTOSECURE_IOT',
                 '-s', ip,
                 '-d', '192.168.1.0/24',
-                '!', '-d', '192.168.1.1',  # Allow gateway
                 '-j', 'DROP'
-            ])
+            ], check=False)
 
         if not rules['allow_internet']:
             # Block all external access
