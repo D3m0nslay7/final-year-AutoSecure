@@ -1,0 +1,28 @@
+# Dockerfile: AutoSecure Attack Runner
+# =====================================
+# Runs all attack scripts inside Docker on the bridge network so that:
+#   1. All container IPs are directly reachable (no port-mapping needed)
+#   2. The monitoring engine can sniff the attack traffic on the bridge
+#
+# Built and launched automatically by run-attack-test.bat
+# and run-complete-test.bat
+#
+# Manual usage:
+#   docker build -t autosecure-attacks -f Attacks/Dockerfile.attacks Attacks/
+#   docker run --rm --network bridge \
+#     -e MDNS_GENERIC_IP=172.17.0.2 \
+#     -e MDNS_HOMEKIT_IP=172.17.0.4 \
+#     -e MOSQUITTO_IP=172.17.0.8   \
+#     -e HIVEMQ_IP=172.17.0.9      \
+#     -e EMQX_IP=172.17.0.10       \
+#     autosecure-attacks
+
+FROM python:3.11-slim
+
+WORKDIR /attacks
+
+# Copy all attack scripts
+COPY . .
+
+# Run the orchestrator — target IPs come from -e env vars
+CMD ["python", "-u", "run_all_attacks.py"]

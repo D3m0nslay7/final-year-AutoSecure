@@ -1,0 +1,40 @@
+# Dockerfile for ARP Spoof Attack Container
+# ==========================================
+# ARP spoofing requires raw socket access (Layer 2) which is only possible
+# from inside a container running on the same Docker bridge network,
+# NOT from the Windows host (Docker Desktop uses Hyper-V/WSL2 which
+# blocks raw ARP injection from the host side).
+#
+# Build:
+#   docker build -t autosecure-arp-attack -f Attacks/Dockerfile.arp_spoof Attacks/
+#
+# Run (replace IPs with values from get_docker_ips.py):
+#   docker run --rm \
+#     --network bridge \
+#     --cap-add=NET_RAW \
+#     --cap-add=NET_ADMIN \
+#     autosecure-arp-attack 172.17.0.2 172.17.0.1
+#
+# Arguments:
+#   $1 = TARGET_IP   — IP of the device to impersonate (e.g. 172.17.0.2)
+#   $2 = VICTIM_IP   — IP to poison, usually the gateway (e.g. 172.17.0.1)
+
+FROM python:3.11-slim
+
+# Install Scapy and its dependencies (libpcap for packet capture/injection)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libpcap-dev \
+        tcpdump \
+        iproute2 \
+        net-tools \
+    && pip install --no-cache-dir scapy \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /attacks
+
+COPY attack_arp_spoof.py .
+
+# ENTRYPOINT passes all docker run arguments as TARGET_IP and VICTIM_IP
+ENTRYPOINT ["python", "-u", "attack_arp_spoof.py"]

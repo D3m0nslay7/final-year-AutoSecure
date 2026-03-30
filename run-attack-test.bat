@@ -1,37 +1,33 @@
 @echo off
-REM Complete AutoSecure Test - Devices + Main Engine Pipeline + Attacks
+REM AutoSecure Attack Test
 REM ============================================================
-REM Runs the full AutoSecure pipeline:
-REM   Discovery  - finds all IoT devices on the Docker bridge
-REM   Segmentation - assigns devices to IOT / QUARANTINE segments
-REM   Monitoring - sniffs for 60s and detects attacks
-REM
-REM ALSO launches the attack suite during the monitoring window
-REM so the engine can detect and report every attack.
+REM Starts all devices + monitoring engine, then fires all
+REM attack scripts during the monitoring window and prints
+REM what was detected.
 REM
 REM Timeline:
-REM   0s  - devices start
-REM   5s  - engines container starts (discovery + segmentation + monitoring)
-REM  30s  - attack container launches during monitoring window
-REM  ~80s - monitoring finishes; full results printed
+REM   0s   — devices start
+REM   5s   — engines container starts (discovery + segmentation + monitoring)
+REM  30s   — attack container launches (monitoring window is now active)
+REM  ~80s  — monitoring finishes; results printed from engine logs
 REM ============================================================
 
 setlocal enabledelayedexpansion
 
 echo ============================================================
-echo         AutoSecure - Complete Testing Environment
+echo      AutoSecure - Attack Detection Test
 echo ============================================================
 echo.
 echo This script will:
 echo   1. Start all test devices in Docker containers
 echo   2. Run the full engine pipeline (discovery + segmentation + monitoring)
 echo   3. Fire all attack scripts during the monitoring window
-echo   4. Display discovery, segmentation, and detection results
+echo   4. Print which attacks were detected
 echo.
 echo ============================================================
 echo.
 
-REM Check if Docker is running
+REM ── Docker check ───────────────────────────────────────────────────────────
 docker ps >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Docker is not running!
@@ -41,14 +37,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [Step 1/4] Starting test devices...
+REM ── Step 1: Start devices ──────────────────────────────────────────────────
+echo [Step 1/5] Starting test devices...
 echo.
-
 cd Devices
 call run-all-devices.bat
-
 if errorlevel 1 (
-    echo.
     echo ERROR: Failed to start devices
     pause
     exit /b 1
@@ -57,23 +51,18 @@ cd ..
 
 echo.
 echo ============================================================
-echo [Step 2/4] Waiting for devices to initialise (5s)...
+echo [Step 2/5] Waiting for devices to initialise (5s)...
 echo ============================================================
-echo.
 timeout /t 5 /nobreak >nul
 
-echo Devices are ready!
+REM ── Step 2: Build engines image ────────────────────────────────────────────
 echo.
-
-REM ── Build and start engines in background ─────────────────────────────────
-echo ============================================================
-echo [Step 3/4] Building and starting AutoSecure Engines (background)...
-echo           Pipeline: Discovery + Segmentation + Monitoring (~80s total)
-echo ============================================================
+echo [Step 3/5] Building and starting the AutoSecure engines (background)...
+echo           Discovery + Segmentation + Monitoring will run for ~80 seconds.
 echo.
 
 cd Engines
-docker build -t autosecure-engines .
+docker build -t autosecure-engines . >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Failed to build engines image
     cd ..
@@ -81,8 +70,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Start detached so we can launch attacks in parallel during monitoring
-docker run -d ^
+REM Start engines in DETACHED mode so we can run attacks in parallel
+docker run -d --rm ^
     --name autosecure-engines-run ^
     --network bridge ^
     --cap-add=NET_ADMIN ^
@@ -97,25 +86,29 @@ if errorlevel 1 (
 )
 cd ..
 
-echo   Engines running in background [autosecure-engines-run]
-echo   Waiting 30 seconds for discovery and segmentation to complete...
-echo   Attacks will launch once the monitoring phase begins.
+echo   Engines running in background (container: autosecure-engines-run)
 echo.
+
+REM ── Step 3: Wait for discovery + segmentation to complete ─────────────────
+echo ============================================================
+echo [Step 4/5] Waiting 30s for discovery and segmentation to complete...
+echo           Attacks will launch once monitoring phase begins.
+echo ============================================================
 timeout /t 30 /nobreak >nul
 
-REM ── Get container IPs and launch attacks ──────────────────────────────────
-echo ============================================================
-echo [Step 4/4] Launching attack suite against live devices...
-echo ============================================================
+REM ── Step 4: Get container IPs and launch attacks ───────────────────────────
+echo.
+echo [Step 5/5] Launching attack suite against live devices...
 echo.
 
+REM Collect container IPs
 for /f "tokens=*" %%i in ('docker inspect --format {{.NetworkSettings.IPAddress}} autosecure-mdns-generic-1 2^>nul') do set MDNS_GENERIC_IP=%%i
 for /f "tokens=*" %%i in ('docker inspect --format {{.NetworkSettings.IPAddress}} autosecure-mdns-homekit-1 2^>nul') do set MDNS_HOMEKIT_IP=%%i
 for /f "tokens=*" %%i in ('docker inspect --format {{.NetworkSettings.IPAddress}} autosecure-mqtt-mosquitto-1 2^>nul') do set MOSQUITTO_IP=%%i
 for /f "tokens=*" %%i in ('docker inspect --format {{.NetworkSettings.IPAddress}} autosecure-mqtt-hivemq-1 2^>nul') do set HIVEMQ_IP=%%i
 for /f "tokens=*" %%i in ('docker inspect --format {{.NetworkSettings.IPAddress}} autosecure-mqtt-emqx-1 2^>nul') do set EMQX_IP=%%i
 
-echo   Target IPs:
+echo   Container IPs discovered:
 echo     mDNS Generic  : %MDNS_GENERIC_IP%
 echo     mDNS HomeKit  : %MDNS_HOMEKIT_IP%
 echo     Mosquitto     : %MOSQUITTO_IP%
@@ -123,9 +116,12 @@ echo     HiveMQ        : %HIVEMQ_IP%
 echo     EMQX          : %EMQX_IP%
 echo.
 
-REM Build attack runner image (attacks run inside Docker on same bridge)
+REM Build attack runner image
+echo   Building attack runner image...
 docker build -t autosecure-attacks -f Attacks/Dockerfile.attacks Attacks/ >nul 2>&1
 
+REM Run attacks inside Docker on the same bridge network
+REM (must be on bridge so the monitoring engine sniffs the traffic)
 docker run --rm ^
     --name autosecure-attacks-run ^
     --network bridge ^
@@ -140,33 +136,29 @@ echo.
 echo ============================================================
 echo   Attack suite finished. Waiting for monitoring to complete...
 echo ============================================================
+echo.
+
+REM Wait for the engines container to finish (monitoring = 60s from when it started)
 docker wait autosecure-engines-run >nul 2>&1
 
-REM ── Print full results ────────────────────────────────────────────────────
+REM ── Step 5: Print monitoring results ──────────────────────────────────────
 echo.
 echo ============================================================
-echo   AUTOSECURE ENGINE OUTPUT
-echo   (Discovery + Segmentation + Monitoring + Detected Attacks)
+echo   MONITORING ENGINE RESULTS
+echo   (What was detected during the attack window)
 echo ============================================================
 echo.
 docker logs autosecure-engines-run 2>&1
 
+REM Clean up the engines container (--rm flag handles it, but be safe)
 docker rm autosecure-engines-run >nul 2>&1
 
 echo.
 echo ============================================================
-echo                    Test Complete!
+echo                   Test Complete!
 echo ============================================================
 echo.
-echo All devices are still running.
-echo.
-echo Options:
-echo   - Run again:            run-complete-test.bat
-echo   - Attacks only:         run-attack-test.bat
-echo   - View device logs:     docker logs autosecure-mdns-generic-1
-echo   - List all devices:     cd Devices ^&^& list-devices.bat
-echo   - Stop all devices:     cd Devices ^&^& stop-all-devices.bat
-echo.
-echo ============================================================
+echo Devices are still running.
+echo   Stop all: cd Devices ^&^& stop-all-devices.bat
 echo.
 pause
