@@ -89,6 +89,12 @@ class DiscoveryEngine:
         #     nmap_devices = self._discover_nmap()
         #     self._merge_devices(nmap_devices)
 
+        # Remove gateway entries (.1) — they are not real devices
+        self.discovered_devices = {
+            k: v for k, v in self.discovered_devices.items()
+            if not str(v.get('ip_address', '')).endswith('.1')
+        }
+
         print("\n" + "=" * 60)
         print(f"Discovery Complete - Total Devices: {len(self.discovered_devices)}")
         print("=" * 60)
@@ -163,6 +169,10 @@ class DiscoveryEngine:
                 return {}
 
             # Step 3: Convert broker list to device dictionary format
+            # Filter out the gateway (.1) — ports are published to the host so
+            # the gateway IP appears to have MQTT ports open, but it isn't a device.
+            brokers = [b for b in brokers if not b['ip'].endswith('.1')]
+
             print(f"  [3/3] Processing {len(brokers)} MQTT broker(s)...")
             mqtt_devices = {}
 
