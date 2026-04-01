@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pip install zeroconf)"
+      "Bash(pip install zeroconf)",
+      "Bash(docker run:*)"
     ],
     "deny": [],
     "ask": []

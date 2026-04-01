@@ -1,7 +1,27 @@
 # monitoring_engine.py
 import time
+import fcntl
+import socket
+import struct
 from collections import defaultdict
 from scapy.all import sniff, ARP, Ether, IP, TCP
+
+
+def _set_promisc(iface):
+    """Enable promiscuous mode on iface via ioctl (no external binaries needed)."""
+    SIOCGIFFLAGS = 0x8913
+    SIOCSIFFLAGS = 0x8914
+    IFF_PROMISC  = 0x100
+    try:
+        s    = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ifreq = struct.pack('16sh', iface.encode(), 0)
+        flags = struct.unpack('16sh', fcntl.ioctl(s.fileno(), SIOCGIFFLAGS, ifreq))[1]
+        ifreq = struct.pack('16sh', iface.encode(), flags | IFF_PROMISC)
+        fcntl.ioctl(s.fileno(), SIOCSIFFLAGS, ifreq)
+        s.close()
+        print(f"  Promiscuous mode enabled on {iface}")
+    except Exception as e:
+        print(f"  Warning: could not enable promiscuous mode on {iface}: {e}")
 
 
 class MonitoringEngine:
@@ -15,12 +35,12 @@ class MonitoringEngine:
 
         # Build lookup tables from discovered devices
         self.known_macs = {}   # {mac: device_info}
-        self.known_ips = {}    # {ip: device_info}
-        self.ip_to_mac = {}    # {ip: mac} for ARP spoof detection
+        self.known_ips  = {}   # {ip: device_info}
+        self.ip_to_mac  = {}   # {ip: mac} for ARP spoof detection
 
         for device_info in devices.values():
             mac = device_info.get('mac_address')
-            ip = device_info.get('ip_address')
+            ip  = device_info.get('ip_address')
             if mac:
                 self.known_macs[mac] = device_info
             if ip:
@@ -29,11 +49,11 @@ class MonitoringEngine:
                 self.ip_to_mac[ip] = mac
 
         self.alerts = []
-        self.seen_alerts = set()       # (type, src) — deduplication key
+        self.seen_alerts       = set()
         self.suppressed_counts = defaultdict(int)
 
         # Port scan state: {src_ip: set of dst_ports seen in current window}
-        self.port_scan_tracker = defaultdict(set)
+        self.port_scan_tracker    = defaultdict(set)
         self.port_scan_timestamps = defaultdict(float)
 
         print(f"  Monitoring {len(self.known_macs)} known devices across "
@@ -44,9 +64,10 @@ class MonitoringEngine:
     # ------------------------------------------------------------------
 
     def start(self, duration=60):
+        _set_promisc("eth0")
         print(f"  Sniffing traffic for {duration} seconds...")
         print("  Waiting for packets...\n")
-        sniff(prn=self._inspect_packet, store=False, timeout=duration)
+        sniff(iface="eth0", prn=self._inspect_packet, store=False, timeout=duration)
         self._print_summary()
 
     # ------------------------------------------------------------------
@@ -74,7 +95,7 @@ class MonitoringEngine:
     def _check_arp_spoof(self, packet):
         if ARP not in packet or packet[ARP].op != 2:  # op 2 = ARP reply
             return
-        ip = packet[ARP].psrc
+        ip  = packet[ARP].psrc
         mac = packet[ARP].hwsrc
         if ip in self.ip_to_mac and self.ip_to_mac[ip] != mac:
             self._alert('ARP_SPOOF', ip,
@@ -93,19 +114,17 @@ class MonitoringEngine:
         if IP not in packet or Ether not in packet:
             return
         src_mac = packet[Ether].src
-        src_ip = packet[IP].src
-        dst_ip = packet[IP].dst
+        src_ip  = packet[IP].src
+        dst_ip  = packet[IP].dst
         segment = self.device_segments.get(src_mac)
 
         if segment == 'iot':
-            # IOT devices must not access other internal devices
             if dst_ip in self.known_ips and dst_ip != src_ip:
                 self._alert('POLICY_VIOLATION', src_ip,
                             f"IOT device {src_ip} ({src_mac}) accessing "
                             f"internal device {dst_ip} — blocked by policy")
 
         elif segment == 'quarantine':
-            # Quarantine devices must not access anything outside known internal IPs
             if dst_ip not in self.known_ips:
                 self._alert('POLICY_VIOLATION', src_ip,
                             f"Quarantined device {src_ip} ({src_mac}) attempting "
@@ -116,13 +135,12 @@ class MonitoringEngine:
             return
         if packet[TCP].flags != 0x02:  # SYN only
             return
-        src_ip = packet[IP].src
+        src_ip   = packet[IP].src
         dst_port = packet[TCP].dport
-        now = time.time()
+        now      = time.time()
 
-        # Reset window after 10 seconds of inactivity
         if now - self.port_scan_timestamps[src_ip] > 10:
-            self.port_scan_tracker[src_ip] = set()
+            self.port_scan_tracker[src_ip]    = set()
             self.port_scan_timestamps[src_ip] = now
 
         self.port_scan_tracker[src_ip].add(dst_port)
@@ -132,7 +150,7 @@ class MonitoringEngine:
             self._alert('PORT_SCAN', src_ip,
                         f"Possible port scan from {src_ip}: "
                         f"{count} distinct ports probed in 10 seconds")
-            self.port_scan_tracker[src_ip] = set()  # Reset to avoid repeated alerts
+            self.port_scan_tracker[src_ip] = set()
 
     # ------------------------------------------------------------------
     # Alert helpers
