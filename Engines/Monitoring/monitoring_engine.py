@@ -1,27 +1,54 @@
 # monitoring_engine.py
+#
+# Docker-aware monitoring: instead of passive Scapy sniffing (which cannot
+# see inter-container bridge traffic on Docker Desktop/Windows), this engine
+# runs tcpdump INSIDE each device container via `docker exec` and parses
+# the output in real time to detect attacks.
+#
+# Requirements:
+#   - The engines container must be started with:
+#       -v /var/run/docker.sock:/var/run/docker.sock
+#   - Device containers must have tcpdump installed (added to their Dockerfiles)
+
 import time
-import fcntl
-import socket
-import struct
+import subprocess
+import threading
+import re
 from collections import defaultdict
-from scapy.all import sniff, ARP, Ether, IP, TCP
 
 
-def _set_promisc(iface):
-    """Enable promiscuous mode on iface via ioctl (no external binaries needed)."""
-    SIOCGIFFLAGS = 0x8913
-    SIOCSIFFLAGS = 0x8914
-    IFF_PROMISC  = 0x100
+CONTAINER_NAME_PREFIXES = [
+    "autosecure-mdns-generic-",
+    "autosecure-mdns-homekit-",
+    "autosecure-ssdp-generic-",
+    "autosecure-mqtt-mosquitto-",
+    "autosecure-mqtt-hivemq-",
+    "autosecure-mqtt-emqx-",
+]
+
+
+def _get_container_name_for_ip(ip):
+    """Ask Docker which autosecure device container has this IP."""
     try:
-        s    = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        ifreq = struct.pack('16sh', iface.encode(), 0)
-        flags = struct.unpack('16sh', fcntl.ioctl(s.fileno(), SIOCGIFFLAGS, ifreq))[1]
-        ifreq = struct.pack('16sh', iface.encode(), flags | IFF_PROMISC)
-        fcntl.ioctl(s.fileno(), SIOCSIFFLAGS, ifreq)
-        s.close()
-        print(f"  Promiscuous mode enabled on {iface}")
-    except Exception as e:
-        print(f"  Warning: could not enable promiscuous mode on {iface}: {e}")
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return None
+        for name in result.stdout.strip().splitlines():
+            if not any(name.startswith(p) for p in CONTAINER_NAME_PREFIXES):
+                continue
+            ip_result = subprocess.run(
+                ["docker", "inspect", "--format",
+                 "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", name],
+                capture_output=True, text=True, timeout=5
+            )
+            if ip_result.stdout.strip() == ip:
+                return name
+    except Exception:
+        pass
+    return None
 
 
 class MonitoringEngine:
@@ -33,10 +60,10 @@ class MonitoringEngine:
         """
         self.device_segments = device_segments
 
-        # Build lookup tables from discovered devices
         self.known_macs = {}   # {mac: device_info}
         self.known_ips  = {}   # {ip: device_info}
-        self.ip_to_mac  = {}   # {ip: mac} for ARP spoof detection
+        self.ip_to_mac  = {}   # {ip: mac}
+        self.ip_to_container = {}  # {ip: container_name}
 
         for device_info in devices.values():
             mac = device_info.get('mac_address')
@@ -51,8 +78,8 @@ class MonitoringEngine:
         self.alerts = []
         self.seen_alerts       = set()
         self.suppressed_counts = defaultdict(int)
+        self._lock = threading.Lock()
 
-        # Port scan state: {src_ip: set of dst_ports seen in current window}
         self.port_scan_tracker    = defaultdict(set)
         self.port_scan_timestamps = defaultdict(float)
 
@@ -64,93 +91,158 @@ class MonitoringEngine:
     # ------------------------------------------------------------------
 
     def start(self, duration=60):
-        _set_promisc("eth0")
-        print(f"  Sniffing traffic for {duration} seconds...")
+        print(f"  Sniffing traffic for {duration} seconds via docker exec tcpdump...")
         print("  Waiting for packets...\n")
-        sniff(iface="eth0", prn=self._inspect_packet, store=False, timeout=duration)
+
+        # Resolve container names for all known device IPs
+        for ip in list(self.known_ips.keys()):
+            name = _get_container_name_for_ip(ip)
+            if name:
+                self.ip_to_container[ip] = name
+
+        print(f"  Resolved {len(self.ip_to_container)} device container(s): "
+              f"{list(self.ip_to_container.values())}")
+
+        if not self.ip_to_container:
+            print("  WARNING: No device containers resolved — no traffic will be captured.")
+
+        threads = []
+        for ip, container in self.ip_to_container.items():
+            t = threading.Thread(
+                target=self._sniff_container,
+                args=(container, ip, duration),
+                daemon=True
+            )
+            t.start()
+            threads.append(t)
+
+        deadline = time.time() + duration + 5
+        for t in threads:
+            remaining = max(0, deadline - time.time())
+            t.join(timeout=remaining)
+
         self._print_summary()
 
     # ------------------------------------------------------------------
-    # Packet inspection
+    # Per-container tcpdump thread
     # ------------------------------------------------------------------
 
-    def _inspect_packet(self, packet):
-        self._check_unknown_device(packet)
-        self._check_arp_spoof(packet)
-        self._check_unencrypted_mqtt(packet)
-        self._check_policy_violation(packet)
-        self._check_port_scan(packet)
+    def _sniff_container(self, container, container_ip, duration):
+        """Run tcpdump inside the given container and parse each line."""
+        cmd = [
+            "docker", "exec", container,
+            "tcpdump", "-l", "-n", "-tttt",
+            "--immediate-mode",
+            "-i", "eth0",
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
+        except FileNotFoundError:
+            print(f"  ERROR: 'docker' command not found. "
+                  f"Ensure the Docker socket is mounted and docker.io is installed.")
+            return
+        except Exception as e:
+            print(f"  ERROR starting tcpdump in {container}: {e}")
+            return
 
-    def _check_unknown_device(self, packet):
-        if Ether not in packet:
-            return
-        src_mac = packet[Ether].src
-        if src_mac in ('ff:ff:ff:ff:ff:ff', '00:00:00:00:00:00'):
-            return
-        if src_mac not in self.known_macs:
-            src_ip = packet[IP].src if IP in packet else 'unknown IP'
-            self._alert('UNKNOWN_DEVICE', src_mac,
-                        f"Packet from unrecognised device MAC {src_mac} (IP: {src_ip})")
+        deadline = time.time() + duration
+        try:
+            for line in proc.stdout:
+                if time.time() > deadline:
+                    break
+                self._parse_tcpdump_line(line.strip(), container_ip)
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
-    def _check_arp_spoof(self, packet):
-        if ARP not in packet or packet[ARP].op != 2:  # op 2 = ARP reply
+    # ------------------------------------------------------------------
+    # tcpdump line parser
+    # ------------------------------------------------------------------
+
+    # 2024-01-01 12:00:00.000000 IP 172.x.x.x.PORT > 172.x.x.x.PORT: Flags [S]
+    _TCP_RE = re.compile(
+        r'IP (\d+\.\d+\.\d+\.\d+)\.(\d+) > (\d+\.\d+\.\d+\.\d+)\.(\d+): Flags \[([^\]]+)\]'
+    )
+    _ARP_RE = re.compile(
+        r'ARP, Reply (\d+\.\d+\.\d+\.\d+) is-at ([0-9a-f:]{17})'
+    )
+
+    def _parse_tcpdump_line(self, line, container_ip):
+        arp_m = self._ARP_RE.search(line)
+        if arp_m:
+            self._check_arp_spoof_raw(arp_m.group(1), arp_m.group(2))
             return
-        ip  = packet[ARP].psrc
-        mac = packet[ARP].hwsrc
+
+        tcp_m = self._TCP_RE.search(line)
+        if not tcp_m:
+            return
+
+        src_ip   = tcp_m.group(1)
+        src_port = int(tcp_m.group(2))
+        dst_ip   = tcp_m.group(3)
+        dst_port = int(tcp_m.group(4))
+        flags    = tcp_m.group(5).strip()
+
+        self._check_unencrypted_mqtt_raw(src_ip, src_port, dst_ip, dst_port)
+        self._check_policy_violation_raw(src_ip, dst_ip)
+
+        if flags == 'S':
+            self._check_port_scan_raw(src_ip, dst_port)
+
+    # ------------------------------------------------------------------
+    # Detection logic
+    # ------------------------------------------------------------------
+
+    def _check_arp_spoof_raw(self, ip, mac):
         if ip in self.ip_to_mac and self.ip_to_mac[ip] != mac:
             self._alert('ARP_SPOOF', ip,
                         f"ARP spoofing detected: {ip} claimed by {mac}, "
                         f"expected {self.ip_to_mac[ip]}")
 
-    def _check_unencrypted_mqtt(self, packet):
-        if IP not in packet or TCP not in packet:
-            return
-        if packet[TCP].dport == 1883 or packet[TCP].sport == 1883:
-            src = packet[IP].src
-            self._alert('UNENCRYPTED_MQTT', src,
-                        f"Unencrypted MQTT (port 1883) from {src} — use port 8883 for TLS")
+    def _check_unencrypted_mqtt_raw(self, src_ip, src_port, dst_ip, dst_port):
+        if dst_port == 1883 or src_port == 1883:
+            self._alert('UNENCRYPTED_MQTT', src_ip,
+                        f"Unencrypted MQTT (port 1883) from {src_ip} "
+                        f"→ {dst_ip} — use port 8883 for TLS")
 
-    def _check_policy_violation(self, packet):
-        if IP not in packet or Ether not in packet:
-            return
-        src_mac = packet[Ether].src
-        src_ip  = packet[IP].src
-        dst_ip  = packet[IP].dst
-        segment = self.device_segments.get(src_mac)
+    def _check_policy_violation_raw(self, src_ip, dst_ip):
+        mac     = self.ip_to_mac.get(src_ip)
+        segment = self.device_segments.get(mac)
 
         if segment == 'iot':
             if dst_ip in self.known_ips and dst_ip != src_ip:
                 self._alert('POLICY_VIOLATION', src_ip,
-                            f"IOT device {src_ip} ({src_mac}) accessing "
-                            f"internal device {dst_ip} — blocked by policy")
-
+                            f"IOT device {src_ip} accessing internal "
+                            f"device {dst_ip} — blocked by policy")
         elif segment == 'quarantine':
             if dst_ip not in self.known_ips:
                 self._alert('POLICY_VIOLATION', src_ip,
-                            f"Quarantined device {src_ip} ({src_mac}) attempting "
+                            f"Quarantined device {src_ip} attempting "
                             f"external access to {dst_ip} — blocked by policy")
 
-    def _check_port_scan(self, packet):
-        if IP not in packet or TCP not in packet:
-            return
-        if packet[TCP].flags != 0x02:  # SYN only
-            return
-        src_ip   = packet[IP].src
-        dst_port = packet[TCP].dport
-        now      = time.time()
-
-        if now - self.port_scan_timestamps[src_ip] > 10:
-            self.port_scan_tracker[src_ip]    = set()
-            self.port_scan_timestamps[src_ip] = now
-
-        self.port_scan_tracker[src_ip].add(dst_port)
-
-        if len(self.port_scan_tracker[src_ip]) > 10:
+    def _check_port_scan_raw(self, src_ip, dst_port):
+        now = time.time()
+        with self._lock:
+            if now - self.port_scan_timestamps[src_ip] > 10:
+                self.port_scan_tracker[src_ip]    = set()
+                self.port_scan_timestamps[src_ip] = now
+            self.port_scan_tracker[src_ip].add(dst_port)
             count = len(self.port_scan_tracker[src_ip])
+
+        if count > 10:
             self._alert('PORT_SCAN', src_ip,
                         f"Possible port scan from {src_ip}: "
                         f"{count} distinct ports probed in 10 seconds")
-            self.port_scan_tracker[src_ip] = set()
+            with self._lock:
+                self.port_scan_tracker[src_ip] = set()
 
     # ------------------------------------------------------------------
     # Alert helpers
@@ -158,14 +250,16 @@ class MonitoringEngine:
 
     def _alert(self, alert_type, src, message):
         dedup_key = (alert_type, src)
-        if dedup_key in self.seen_alerts:
-            self.suppressed_counts[dedup_key] += 1
-            return
-        self.seen_alerts.add(dedup_key)
+        with self._lock:
+            if dedup_key in self.seen_alerts:
+                self.suppressed_counts[dedup_key] += 1
+                return
+            self.seen_alerts.add(dedup_key)
 
         timestamp = time.strftime('%H:%M:%S')
         entry = {'time': timestamp, 'type': alert_type, 'message': message}
-        self.alerts.append(entry)
+        with self._lock:
+            self.alerts.append(entry)
         print(f"  [{timestamp}] ALERT [{alert_type}]: {message}")
 
     def _print_summary(self):

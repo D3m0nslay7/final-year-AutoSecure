@@ -106,6 +106,7 @@ docker run -d ^
     --network autosecure-net ^
     --cap-add=NET_ADMIN ^
     --cap-add=NET_RAW ^
+    -v //var/run/docker.sock:/var/run/docker.sock ^
     autosecure-engines
 
 if errorlevel 1 (
