@@ -185,26 +185,10 @@ class MonitoringEngine:
     _ARP_RE = re.compile(
         r'ARP, Reply (\d+\.\d+\.\d+\.\d+) is-at ([0-9a-f:]{17})'
     )
-    # Gratuitous ARP: "who-has X tell X" or broadcast reply with no prior request
-    _ARP_REQUEST_RE = re.compile(
-        r'ARP, Request who-has (\d+\.\d+\.\d+\.\d+) tell (\d+\.\d+\.\d+\.\d+)'
-    )
-
     def _parse_tcpdump_line(self, line, container_ip):
         arp_m = self._ARP_RE.search(line)
         if arp_m:
             self._check_arp_spoof_raw(arp_m.group(1), arp_m.group(2))
-            return
-
-        # Gratuitous ARP: attacker claims ownership by broadcasting who-has X tell X
-        garp_m = self._ARP_REQUEST_RE.search(line)
-        if garp_m:
-            target_ip = garp_m.group(1)
-            sender_ip = garp_m.group(2)
-            if target_ip == sender_ip and sender_ip in self.known_ips:
-                self._alert('ARP_SPOOF', sender_ip,
-                            f"Gratuitous ARP detected: {sender_ip} broadcasting "
-                            f"ownership of its own IP — possible ARP cache poisoning")
             return
 
         udp_m = self._UDP_RE.search(line)

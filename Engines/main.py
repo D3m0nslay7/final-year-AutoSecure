@@ -5,7 +5,7 @@ from Discovery import DiscoveryEngine
 from Segmentation.segmentation_engine import SegmentationEngine
 from Monitoring.monitoring_engine import MonitoringEngine
 
-MONITORING_DURATION = 60   # seconds per monitoring window
+MONITORING_DURATION = 120  # seconds per monitoring window
 REDISCOVERY_INTERVAL = 5   # re-run discovery every N monitoring cycles
 
 
