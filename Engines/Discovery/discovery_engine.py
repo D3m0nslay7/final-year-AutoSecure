@@ -33,7 +33,6 @@ class DiscoveryEngine:
             methods: Optional list of methods to use. Default: ['mdns', 'ssdp', 'mqtt']
                     Available: 'mdns', 'ssdp', 'mqtt'
                     Note: ARP is automatically used to enrich discovered devices with MAC addresses
-                    Future: 'nmap' (TODO)
 
         Returns:
             Dictionary of all discovered devices
@@ -86,8 +85,9 @@ class DiscoveryEngine:
 
         # Remove gateway entries (.1) — they are not real devices
         self.discovered_devices = {
-            k: v for k, v in self.discovered_devices.items()
-            if not str(v.get('ip_address', '')).endswith('.1')
+            k: v
+            for k, v in self.discovered_devices.items()
+            if not str(v.get("ip_address", "")).endswith(".1")
         }
 
         print("\n" + "=" * 60)
@@ -166,7 +166,7 @@ class DiscoveryEngine:
             # Step 3: Convert broker list to device dictionary format
             # Filter out the gateway (.1) — ports are published to the host so
             # the gateway IP appears to have MQTT ports open, but it isn't a device.
-            brokers = [b for b in brokers if not b['ip'].endswith('.1')]
+            brokers = [b for b in brokers if not b["ip"].endswith(".1")]
 
             print(f"  [3/3] Processing {len(brokers)} MQTT broker(s)...")
             mqtt_devices = {}
@@ -177,27 +177,31 @@ class DiscoveryEngine:
 
                 # Convert to standard device format
                 mqtt_devices[device_id] = {
-                    'name': f"{broker['vendor']} MQTT Broker",
-                    'type': 'mqtt_broker',
-                    'ip_address': broker['ip'],
-                    'mac_address': broker.get('mac'),
-                    'port': broker['port'],
-                    'server': broker['vendor'],
-                    'vendor': broker['vendor'],
-                    'properties': {
-                        'mqtt_version': broker.get('mqtt_version'),
-                        'features': broker.get('features', []),
-                        'additional_ports': broker.get('additional_ports', [])
+                    "name": f"{broker['vendor']} MQTT Broker",
+                    "type": "mqtt_broker",
+                    "ip_address": broker["ip"],
+                    "mac_address": broker.get("mac"),
+                    "port": broker["port"],
+                    "server": broker["vendor"],
+                    "vendor": broker["vendor"],
+                    "properties": {
+                        "mqtt_version": broker.get("mqtt_version"),
+                        "features": broker.get("features", []),
+                        "additional_ports": broker.get("additional_ports", []),
                     },
-                    'discovery_method': 'mqtt'
+                    "discovery_method": "mqtt",
                 }
 
-                print(f"  ✓ Found: {broker['vendor']} at {broker['ip']}:{broker['port']} (MQTT {broker.get('mqtt_version', 'Unknown')})")
+                print(
+                    f"  ✓ Found: {broker['vendor']} at {broker['ip']}:{broker['port']} (MQTT {broker.get('mqtt_version', 'Unknown')})"
+                )
 
             return mqtt_devices
 
         except PermissionError:
-            print("  Error: MQTT discovery requires administrator/root privileges for network scanning")
+            print(
+                "  Error: MQTT discovery requires administrator/root privileges for network scanning"
+            )
             return {}
         except ImportError as e:
             print(f"  Error: Missing required library for MQTT discovery: {e}")
@@ -344,9 +348,11 @@ class DiscoveryEngine:
             return None
 
         for device_id, device_info in self.discovered_devices.items():
-            if (device_info.get("ip_address") == ip_address and
-                device_info.get("port") == port and
-                device_info.get("type") == "mqtt_broker"):
+            if (
+                device_info.get("ip_address") == ip_address
+                and device_info.get("port") == port
+                and device_info.get("type") == "mqtt_broker"
+            ):
                 return {"id": device_id, **device_info}
         return None
 
