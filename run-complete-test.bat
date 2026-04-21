@@ -41,6 +41,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM Ensure shared network exists (create silently if already present)
+docker network create autosecure-net >nul 2>&1
+
 echo [Step 1/4] Starting test devices...
 echo.
 
@@ -84,9 +87,10 @@ if errorlevel 1 (
 REM Start detached so we can launch attacks in parallel during monitoring
 docker run -d ^
     --name autosecure-engines-run ^
-    --network bridge ^
+    --network autosecure-net ^
     --cap-add=NET_ADMIN ^
     --cap-add=NET_RAW ^
+    -v //var/run/docker.sock:/var/run/docker.sock ^
     autosecure-engines
 
 if errorlevel 1 (
