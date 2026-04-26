@@ -108,9 +108,16 @@ class MonitoringEngine:
             threads.append(t)
 
         deadline = time.time() + duration + 5
-        for t in threads:
+
+        if threads:
+            for t in threads:
+                remaining = max(0, deadline - time.time())
+                t.join(timeout=remaining)
+        else:
+            # No containers to sniff — still wait the full window so the
+            # monitoring loop doesn't spin instantly between cycles
             remaining = max(0, deadline - time.time())
-            t.join(timeout=remaining)
+            time.sleep(remaining)
 
         self._print_summary()
 
@@ -162,14 +169,25 @@ class MonitoringEngine:
     _TCP_RE = re.compile(
         r'IP (\d+\.\d+\.\d+\.\d+)\.(\d+) > (\d+\.\d+\.\d+\.\d+)\.(\d+): Flags \[([^\]]+)\]'
     )
+    # 2024-01-01 12:00:00.000000 IP 172.x.x.x.PORT > 239.255.255.250.1900: UDP, length N
+    _UDP_RE = re.compile(
+        r'IP (\d+\.\d+\.\d+\.\d+)\.(\d+) > (\d+\.\d+\.\d+\.\d+)\.(\d+): UDP'
+    )
     _ARP_RE = re.compile(
         r'ARP, Reply (\d+\.\d+\.\d+\.\d+) is-at ([0-9a-f:]{17})'
     )
-
     def _parse_tcpdump_line(self, line, container_ip):
         arp_m = self._ARP_RE.search(line)
         if arp_m:
             self._check_arp_spoof_raw(arp_m.group(1), arp_m.group(2))
+            return
+
+        udp_m = self._UDP_RE.search(line)
+        if udp_m:
+            src_ip   = udp_m.group(1)
+            dst_port = int(udp_m.group(4))
+            if dst_port == 1900:
+                self._check_unknown_device(src_ip)
             return
 
         tcp_m = self._TCP_RE.search(line)
@@ -191,6 +209,12 @@ class MonitoringEngine:
     # ------------------------------------------------------------------
     # Detection logic
     # ------------------------------------------------------------------
+
+    def _check_unknown_device(self, src_ip):
+        if src_ip not in self.known_ips:
+            self._alert('UNKNOWN_DEVICE', src_ip,
+                        f"Unknown device sending SSDP traffic from {src_ip} "
+                        f"— not in discovered device list")
 
     def _check_arp_spoof_raw(self, ip, mac):
         if ip in self.ip_to_mac and self.ip_to_mac[ip] != mac:

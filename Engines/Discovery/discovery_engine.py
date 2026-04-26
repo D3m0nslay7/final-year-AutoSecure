@@ -83,11 +83,6 @@ class DiscoveryEngine:
             )
             self._enrich_with_arp()
 
-        # if 'nmap' in methods:
-        #     print("\n[3/N] Running Nmap Discovery...")
-        #     nmap_devices = self._discover_nmap()
-        #     self._merge_devices(nmap_devices)
-
         # Remove gateway entries (.1) — they are not real devices
         self.discovered_devices = {
             k: v
