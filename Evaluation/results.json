@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-04-26 18:30:57",
+  "metric_1_ttd": {
+    "per_alert_type_seconds": {
+      "PORT_SCAN": 0.5,
+      "UNENCRYPTED_MQTT": 4.58
+    },
+    "average_seconds": 2.54,
+    "without_autosecure": "infinite \u2014 no automated detection"
+  },
+  "metric_2_tdr": {
+    "rate_percent": 100.0,
+    "caught": [
+      "PORT_SCAN",
+      "UNENCRYPTED_MQTT"
+    ],
+    "missed": [],
+    "without_autosecure": "0%"
+  },
+  "raw_alerts": [
+    {
+      "time": "18:29:26",
+      "raw_time": 1777228166.656972,
+      "type": "PORT_SCAN",
+      "message": "Possible port scan from 172.18.0.12: 11 distinct ports probed in 10 seconds"
+    },
+    {
+      "time": "18:29:30",
+      "raw_time": 1777228170.7306013,
+      "type": "UNENCRYPTED_MQTT",
+      "message": "Unencrypted MQTT (port 1883) from 172.18.0.12 \u2192 172.18.0.4 \u2014 use port 8883 for TLS"
+    },
+    {
+      "time": "18:29:30",
+      "raw_time": 1777228170.7306423,
+      "type": "UNENCRYPTED_MQTT",
+      "message": "Unencrypted MQTT (port 1883) from 172.18.0.4 \u2192 172.18.0.12 \u2014 use port 8883 for TLS"
+    },
+    {
+      "time": "18:29:44",
+      "raw_time": 1777228184.3642693,
+      "type": "UNENCRYPTED_MQTT",
+      "message": "Unencrypted MQTT (port 1883) from 172.18.0.8 \u2192 172.18.0.12 \u2014 use port 8883 for TLS"
+    },
+    {
+      "time": "18:29:50",
+      "raw_time": 1777228190.8616498,
+      "type": "UNENCRYPTED_MQTT",
+      "message": "Unencrypted MQTT (port 1883) from 172.18.0.9 \u2192 172.18.0.12 \u2014 use port 8883 for TLS"
+    },
+    {
+      "time": "18:29:56",
+      "raw_time": 1777228196.3222406,
+      "type": "UNENCRYPTED_MQTT",
+      "message": "Unencrypted MQTT (port 1883) from 172.18.0.10 \u2192 172.18.0.12 \u2014 use port 8883 for TLS"
+    }
+  ],
+  "monitoring_window_seconds": 96.1
+}

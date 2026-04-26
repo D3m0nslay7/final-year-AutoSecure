@@ -1,14 +1,5 @@
 # monitoring_engine.py
-#
-# Docker-aware monitoring: instead of passive Scapy sniffing (which cannot
-# see inter-container bridge traffic on Docker Desktop/Windows), this engine
-# runs tcpdump INSIDE each device container via `docker exec` and parses
-# the output in real time to detect attacks.
-#
-# Requirements:
-#   - The engines container must be started with:
-#       -v /var/run/docker.sock:/var/run/docker.sock
-#   - Device containers must have tcpdump installed (added to their Dockerfiles)
+
 
 import time
 import subprocess
@@ -257,7 +248,7 @@ class MonitoringEngine:
             self.seen_alerts.add(dedup_key)
 
         timestamp = time.strftime('%H:%M:%S')
-        entry = {'time': timestamp, 'type': alert_type, 'message': message}
+        entry = {'time': timestamp, 'raw_time': time.time(), 'type': alert_type, 'message': message}
         with self._lock:
             self.alerts.append(entry)
         print(f"  [{timestamp}] ALERT [{alert_type}]: {message}")
